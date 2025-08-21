@@ -13,8 +13,6 @@
 #include "DataFormats/PatCandidates/interface/Jet.h"
 #include "DataFormats/PatCandidates/interface/PackedCandidate.h"
 #include "DataFormats/JetReco/interface/GenJet.h"
-#include "DataFormats/BTauReco/interface/UnifiedParticleTransformerAK4TagInfo.h"
-#include "DataFormats/BTauReco/interface/UnifiedParticleTransformerAK4Features.h"
 
 #include "PhysicsTools/ONNXRuntime/interface/ONNXRuntime.h"
 #include "RecoBTag/ONNXRuntime/interface/tensor_fillers.h"
@@ -43,9 +41,8 @@ private:
 
   // UParT inference methods
   void processJet(const pat::Jet& jet, const edm::Event& iEvent);
-  btagbtvdeep::UnifiedParticleTransformerAK4Features extractFeatures(const pat::Jet& jet, const edm::Event& iEvent);
-  std::vector<float> runInference(const btagbtvdeep::UnifiedParticleTransformerAK4Features& features);
-  void fillInputTensors(const btagbtvdeep::UnifiedParticleTransformerAK4Features& features);
+  std::vector<float> runInference(const pat::Jet& jet, const edm::Event& iEvent);
+  void fillInputTensors(const pat::Jet& jet, const edm::Event& iEvent);
 
   // Configuration
   const edm::EDGetTokenT<std::vector<pat::Jet>> jetToken_;

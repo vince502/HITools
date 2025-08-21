@@ -108,11 +108,8 @@ void UParTEvaluator::processJet(const pat::Jet& jet, const edm::Event& iEvent) {
   jetEtaHist_->Fill(jet_eta_);
   
   try {
-    // Extract UParT features
-    auto features = extractFeatures(jet, iEvent);
-    
-    // Run inference
-    auto predictions = runInference(features);
+    // Run inference directly with jet
+    auto predictions = runInference(jet, iEvent);
     
     if (predictions.size() == classNames_.size()) {
       upart_probs_ = predictions;
@@ -142,19 +139,36 @@ void UParTEvaluator::processJet(const pat::Jet& jet, const edm::Event& iEvent) {
   }
 }
 
-btagbtvdeep::UnifiedParticleTransformerAK4Features UParTEvaluator::extractFeatures(
-    const pat::Jet& jet, const edm::Event& iEvent) {
-  
-  btagbtvdeep::UnifiedParticleTransformerAK4Features features;
-  features.is_filled = false;
-  
+std::vector<float> UParTEvaluator::runInference(const pat::Jet& jet, const edm::Event& iEvent) {
+  try {
+    // Fill input tensors directly from jet
+    fillInputTensors(jet, iEvent);
+    
+    // Run ONNX inference
+    auto outputs = onnxSession_->run(inputNames_, tensorData_, inputShapes_, outputNames_, 1);
+    
+    if (outputs.empty() || outputs[0].empty()) {
+      edm::LogWarning("UParTEvaluator") << "Empty inference output";
+      return std::vector<float>(classNames_.size(), -1.0);
+    }
+    
+    return outputs[0];
+    
+  } catch (const std::exception& e) {
+    edm::LogError("UParTEvaluator") << "Inference error: " << e.what();
+    return std::vector<float>(classNames_.size(), -1.0);
+  }
+}
+
+
+void UParTEvaluator::fillInputTensors(const pat::Jet& jet, const edm::Event& iEvent) {
   // Get PF candidates
   edm::Handle<std::vector<pat::PackedCandidate>> pfCands;
   iEvent.getByToken(pfCandToken_, pfCands);
   
   if (!pfCands.isValid()) {
     edm::LogWarning("UParTEvaluator") << "Invalid PF candidate collection";
-    return features;
+    return;
   }
   
   // Extract constituents within jet cone
@@ -188,126 +202,11 @@ btagbtvdeep::UnifiedParticleTransformerAK4Features UParTEvaluator::extractFeatur
   std::sort(neutralCands.begin(), neutralCands.end(), ptSort);
   std::sort(lostTracks.begin(), lostTracks.end(), ptSort);
   
-  // Fill feature vectors (simplified implementation)
-  features.c_pf_features.clear();
-  features.n_pf_features.clear();
-  features.lt_features.clear();
-  features.sv_features.clear();
-  
-  // Limit to maximum accepted features
-  const size_t max_cpf = std::min(chargedCands.size(), (size_t)UparT::n_cpf_accept);
-  const size_t max_npf = std::min(neutralCands.size(), (size_t)UparT::n_npf_accept);
-  const size_t max_lt = std::min(lostTracks.size(), (size_t)UparT::n_lt_accept);
-  
-  // Fill charged particle features (25 features per particle)
-  for (size_t i = 0; i < max_cpf; ++i) {
-    const auto& cand = *chargedCands[i];
-    btagbtvdeep::ChargedCandidateFeatures cpf;
-    
-    // Basic kinematic features
-    cpf.btagPf_trackEtaRel = cand.eta() - jet.eta();
-    cpf.btagPf_trackPtRel = cand.pt() / jet.pt();
-    cpf.btagPf_trackPPar = cand.p() * std::cos(reco::deltaR(jet.eta(), jet.phi(), cand.eta(), cand.phi()));
-    cpf.btagPf_trackDeltaR = reco::deltaR(jet.eta(), jet.phi(), cand.eta(), cand.phi());
-    cpf.btagPf_trackPtRatio = cand.pt() / jet.pt();
-    cpf.btagPf_trackPParRatio = cpf.btagPf_trackPPar / jet.p();
-    
-    // Track quality features
-    if (cand.hasTrackDetails()) {
-      cpf.btagPf_trackSip2dVal = cand.dxy();
-      cpf.btagPf_trackSip2dSig = cand.dxyError() > 0 ? cand.dxy() / cand.dxyError() : 0;
-      cpf.btagPf_trackSip3dVal = cand.dz();
-      cpf.btagPf_trackSip3dSig = cand.dzError() > 0 ? cand.dz() / cand.dzError() : 0;
-      cpf.btagPf_trackJetDistVal = reco::deltaR(jet.eta(), jet.phi(), cand.eta(), cand.phi());
-    }
-    
-    // Particle ID
-    cpf.btagPf_trackIsElectron = (std::abs(cand.pdgId()) == 11) ? 1.0 : 0.0;
-    cpf.btagPf_trackIsMuon = (std::abs(cand.pdgId()) == 13) ? 1.0 : 0.0;
-    
-    features.c_pf_features.push_back(cpf);
-  }
-  
-  // Fill neutral particle features (8 features per particle)
-  for (size_t i = 0; i < max_npf; ++i) {
-    const auto& cand = *neutralCands[i];
-    btagbtvdeep::NeutralCandidateFeatures npf;
-    
-    npf.btagPf_ptrel = cand.pt() / jet.pt();
-    npf.btagPf_erel = cand.energy() / jet.energy();
-    npf.btagPf_phirel = reco::deltaPhi(jet.phi(), cand.phi());
-    npf.btagPf_etarel = cand.eta() - jet.eta();
-    npf.btagPf_deltaR = reco::deltaR(jet.eta(), jet.phi(), cand.eta(), cand.phi());
-    npf.btagPf_isGamma = (cand.pdgId() == 22) ? 1.0 : 0.0;
-    npf.btagPf_hadFrac = cand.hcalFraction();
-    npf.btagPf_drminsv = 999; // Would need SV collection to compute properly
-    
-    features.n_pf_features.push_back(npf);
-  }
-  
-  // Fill lost track features (18 features per track)
-  for (size_t i = 0; i < max_lt; ++i) {
-    const auto& cand = *lostTracks[i];
-    btagbtvdeep::LostTrackFeatures ltf;
-    
-    ltf.btagPf_trackEtaRel = cand.eta() - jet.eta();
-    ltf.btagPf_trackPtRel = cand.pt() / jet.pt();
-    ltf.btagPf_trackPPar = cand.p() * std::cos(reco::deltaR(jet.eta(), jet.phi(), cand.eta(), cand.phi()));
-    ltf.btagPf_trackDeltaR = reco::deltaR(jet.eta(), jet.phi(), cand.eta(), cand.phi());
-    ltf.btagPf_trackPtRatio = cand.pt() / jet.pt();
-    ltf.btagPf_trackPParRatio = ltf.btagPf_trackPPar / jet.p();
-    
-    if (cand.hasTrackDetails()) {
-      ltf.btagPf_trackSip2dVal = cand.dxy();
-      ltf.btagPf_trackSip2dSig = cand.dxyError() > 0 ? cand.dxy() / cand.dxyError() : 0;
-      ltf.btagPf_trackSip3dVal = cand.dz();
-      ltf.btagPf_trackSip3dSig = cand.dzError() > 0 ? cand.dz() / cand.dzError() : 0;
-    }
-    
-    ltf.btagPf_trackJetDistVal = reco::deltaR(jet.eta(), jet.phi(), cand.eta(), cand.phi());
-    ltf.btagPf_numberOfLostHits = cand.lostInnerHits();
-    
-    features.lt_features.push_back(ltf);
-  }
-  
-  // Note: Secondary vertex features would require access to SV collection
-  // For now, leaving sv_features empty
-  
-  features.is_filled = true;
-  return features;
-}
-
-std::vector<float> UParTEvaluator::runInference(const btagbtvdeep::UnifiedParticleTransformerAK4Features& features) {
-  if (!features.is_filled) {
-    return std::vector<float>(classNames_.size(), -1.0);
-  }
-  
-  try {
-    // Fill input tensors
-    fillInputTensors(features);
-    
-    // Run ONNX inference
-    auto outputs = onnxSession_->run(inputNames_, tensorData_, inputShapes_, outputNames_, 1);
-    
-    if (outputs.empty() || outputs[0].empty()) {
-      edm::LogWarning("UParTEvaluator") << "Empty inference output";
-      return std::vector<float>(classNames_.size(), -1.0);
-    }
-    
-    return outputs[0];
-    
-  } catch (const std::exception& e) {
-    edm::LogError("UParTEvaluator") << "Inference error: " << e.what();
-    return std::vector<float>(classNames_.size(), -1.0);
-  }
-}
-
-void UParTEvaluator::fillInputTensors(const btagbtvdeep::UnifiedParticleTransformerAK4Features& features) {
-  // Get actual sizes
-  const unsigned n_cpf = std::clamp((unsigned)features.c_pf_features.size(), 1u, UparT::n_cpf_accept);
-  const unsigned n_lt = std::clamp((unsigned)features.lt_features.size(), 1u, UparT::n_lt_accept);
-  const unsigned n_npf = std::clamp((unsigned)features.n_pf_features.size(), 1u, UparT::n_npf_accept);
-  const unsigned n_sv = std::clamp((unsigned)features.sv_features.size(), 1u, UparT::n_sv_accept);
+  // Use UParT constants from tensor_configs.h
+  const unsigned n_cpf = std::clamp((unsigned)chargedCands.size(), 1u, UparT::n_cpf_accept);
+  const unsigned n_lt = std::clamp((unsigned)lostTracks.size(), 1u, UparT::n_lt_accept);
+  const unsigned n_npf = std::clamp((unsigned)neutralCands.size(), 1u, UparT::n_npf_accept);
+  const unsigned n_sv = 1u; // No SV collection for now
   
   // Set input shapes for dynamic batching
   inputShapes_ = {
@@ -339,16 +238,8 @@ void UParTEvaluator::fillInputTensors(const btagbtvdeep::UnifiedParticleTransfor
     tensorData_.emplace_back(size, 0.0f);
   }
   
-  // Fill tensors using the appropriate tensor fillers
-  // This would use the UparT_tensor_filler functions from CMSSW
-  // For now, implementing simplified version
-  
-  const float* start = nullptr;
-  unsigned offset = 0;
-  
-  // Note: In a real implementation, you would use:
-  // UparT_tensor_filler(tensorData_, UparT::kChargedCandidates, features.c_pf_features, n_cpf, start, offset);
-  // etc. for all feature types
+  // Fill tensors with simplified features (for compatibility with CMSSW 13.2.10)
+  // This is a placeholder implementation - in practice you'd need proper tensor fillers
   
   edm::LogInfo("UParTEvaluator") << "Filled tensors for inference: " 
                                  << "cpf=" << n_cpf << ", lt=" << n_lt 
