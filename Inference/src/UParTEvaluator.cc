@@ -202,35 +202,45 @@ void UParTEvaluator::fillInputTensors(const pat::Jet& jet, const edm::Event& iEv
   std::sort(neutralCands.begin(), neutralCands.end(), ptSort);
   std::sort(lostTracks.begin(), lostTracks.end(), ptSort);
   
-  // Use UParT constants from tensor_configs.h
-  const unsigned n_cpf = std::clamp((unsigned)chargedCands.size(), 1u, UparT::n_cpf_accept);
-  const unsigned n_lt = std::clamp((unsigned)lostTracks.size(), 1u, UparT::n_lt_accept);
-  const unsigned n_npf = std::clamp((unsigned)neutralCands.size(), 1u, UparT::n_npf_accept);
+  // Define UParT constants (hardcoded for CMSSW 13.2.10 compatibility)
+  const unsigned max_cpf = 29;  // n_cpf_accept
+  const unsigned max_lt = 5;    // n_lt_accept  
+  const unsigned max_npf = 25;  // n_npf_accept
+  const unsigned max_sv = 5;    // n_sv_accept
+  
+  // Feature dimensions
+  const unsigned cpf_features = 25;  // ChargedCandidates features
+  const unsigned lt_features = 18;   // LostTracks features
+  const unsigned npf_features = 8;   // NeutralCandidates features
+  const unsigned sv_features = 14;   // Vertices features
+  const unsigned vec4_features = 4;  // 4-vector features (pt,eta,phi,e)
+  
+  const unsigned n_cpf = std::clamp((unsigned)chargedCands.size(), 1u, max_cpf);
+  const unsigned n_lt = std::clamp((unsigned)lostTracks.size(), 1u, max_lt);
+  const unsigned n_npf = std::clamp((unsigned)neutralCands.size(), 1u, max_npf);
   const unsigned n_sv = 1u; // No SV collection for now
   
   // Set input shapes for dynamic batching
-  inputShapes_ = {
-    {1, (int64_t)n_cpf, (int64_t)UparT::N_InputFeatures[UparT::kChargedCandidates]},
-    {1, (int64_t)n_lt, (int64_t)UparT::N_InputFeatures[UparT::kLostTracks]},
-    {1, (int64_t)n_npf, (int64_t)UparT::N_InputFeatures[UparT::kNeutralCandidates]},
-    {1, (int64_t)n_sv, (int64_t)UparT::N_InputFeatures[UparT::kVertices]},
-    {1, (int64_t)n_cpf, (int64_t)UparT::N_InputFeatures[UparT::kChargedCandidates4Vec]},
-    {1, (int64_t)n_lt, (int64_t)UparT::N_InputFeatures[UparT::kLostTracks4Vec]},
-    {1, (int64_t)n_npf, (int64_t)UparT::N_InputFeatures[UparT::kNeutralCandidates4Vec]},
-    {1, (int64_t)n_sv, (int64_t)UparT::N_InputFeatures[UparT::kVertices4Vec]}
-  };
+  inputShapes_.clear();
+  inputShapes_.push_back({1, (int64_t)n_cpf, (int64_t)cpf_features});
+  inputShapes_.push_back({1, (int64_t)n_lt, (int64_t)lt_features});
+  inputShapes_.push_back({1, (int64_t)n_npf, (int64_t)npf_features});
+  inputShapes_.push_back({1, (int64_t)n_sv, (int64_t)sv_features});
+  inputShapes_.push_back({1, (int64_t)n_cpf, (int64_t)vec4_features});
+  inputShapes_.push_back({1, (int64_t)n_lt, (int64_t)vec4_features});
+  inputShapes_.push_back({1, (int64_t)n_npf, (int64_t)vec4_features});
+  inputShapes_.push_back({1, (int64_t)n_sv, (int64_t)vec4_features});
   
   // Calculate input sizes
-  inputSizes_ = {
-    n_cpf * UparT::N_InputFeatures[UparT::kChargedCandidates],
-    n_lt * UparT::N_InputFeatures[UparT::kLostTracks],
-    n_npf * UparT::N_InputFeatures[UparT::kNeutralCandidates],
-    n_sv * UparT::N_InputFeatures[UparT::kVertices],
-    n_cpf * UparT::N_InputFeatures[UparT::kChargedCandidates4Vec],
-    n_lt * UparT::N_InputFeatures[UparT::kLostTracks4Vec],
-    n_npf * UparT::N_InputFeatures[UparT::kNeutralCandidates4Vec],
-    n_sv * UparT::N_InputFeatures[UparT::kVertices4Vec]
-  };
+  inputSizes_.clear();
+  inputSizes_.push_back(n_cpf * cpf_features);
+  inputSizes_.push_back(n_lt * lt_features);
+  inputSizes_.push_back(n_npf * npf_features);
+  inputSizes_.push_back(n_sv * sv_features);
+  inputSizes_.push_back(n_cpf * vec4_features);
+  inputSizes_.push_back(n_lt * vec4_features);
+  inputSizes_.push_back(n_npf * vec4_features);
+  inputSizes_.push_back(n_sv * vec4_features);
   
   // Initialize tensor data
   tensorData_.clear();
